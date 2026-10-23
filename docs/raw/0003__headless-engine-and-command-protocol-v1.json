@@ -1,0 +1,193 @@
+{
+  "document": {
+    "document-id": "sweeper.headless-engine-and-command-protocol.v1",
+    "title": "Sweeper Headless Engine and Command Protocol v1",
+    "date": "2026-10-23",
+    "status": "implementation specification; engine and clients not yet implemented",
+    "purpose": "Specify the headless runner, shared CLI/GUI command language, project subscriptions, configuration, status, and bounded log.",
+    "supersedes": [],
+    "superseded-by": [],
+    "related-documents": [
+      "0001__initial-spec-per-wing-cat.md",
+      "0002__request-format-v1.json",
+      "0004__codex-desktop-communication-v1.json"
+    ],
+    "references": [
+      "F:/repo/FileTalk/docs/manifesto/2025-06-04_filetalk-manifesto.md",
+      "F:/repo/FileTalk/docs/spec/patchboard-core.v1.md",
+      "F:/repo/FileTalk/docs/spec/patchboard-file-transport.v1.md",
+      "F:/repo/machine-root/docs/raw/0001__machineroot-package.json",
+      "F:/repo/soft-schema/docs/raw/05__softspec_spec_v3.txt"
+    ]
+  },
+  "architecture": [
+    "One headless engine owns subscriptions, configuration, dispatch records, and runtime state. A second engine using the same state directory must refuse startup through an OS-held process lock.",
+    "The CLI and a separate Tkinter control panel communicate with the engine using the same FileTalk request/response protocol. Closing either client does not stop the engine.",
+    "Every five seconds by default, scan every subscribed project's db/sweep-requests directory. Do not visit only one project per interval. Agent execution must not block scanning or command handling.",
+    "Use monotonic time for scheduling and offset-bearing timestamps for reported human-readable times. Do not overlap scans or replay missed intervals in a burst.",
+    "Process commands and results promptly on a separate short polling cadence; the project scan interval must not determine command responsiveness.",
+    "Initial implementation is the engine and CLI. Tkinter is a later client of the same protocol; read Lion's Tkinter conventions before implementing it.",
+    "Implement small procedural modules with visible state, explicit startup, and no application-manager classes, following the supplied coding style cards."
+  ],
+  "state-location": {
+    "selection": "Engine startup accepts --state-dir. Clients use the same explicit directory or the documented user-local default, proposed as %LOCALAPPDATA%/Sweeper on Windows. No installation-specific absolute paths are built into the program.",
+    "files": {
+      "config.json": "Persistent settings and subscriptions; engine-owned.",
+      "status.json": "Engine-owned snapshot with instance UUID, heartbeat time, and runtime status. A stale snapshot is not evidence of a running engine.",
+      "log.json": "Persistent bounded list of recent meaningful events; default maximum 20.",
+      "INCOMING/": "Engine command and worker-result mailbox.",
+      "clients/<client-uuid>/INCOMING/": "Each CLI invocation or GUI instance owns a distinct reply inbox.",
+      "commands/<command-uuid>.json": "Command fingerprint, processing stage, and cached outcome for duplicate recognition.",
+      "dispatch/<project-guid>/<request-uuid>/<attempt-uuid>.json": "Persistent assignment, submission evidence, and result. Independent of the bounded activity log."
+    },
+    "persistence": "Publish configuration, snapshots, log, and dispatch records safely as engine-owned state. This does not change the FileTalk transport rules for message files."
+  },
+  "configuration": {
+    "key-syntax": "Dot-separated paths. Project aliases use lowercase letters, digits, and hyphens, beginning with a letter; aliases cannot contain dots. Aliases are convenient handles, not project identity.",
+    "settings": {
+      "poll-seconds": {"default": 5, "constraint": "positive finite number", "meaning": "Interval between scans of all subscribed project folders."},
+      "log-limit": {"default": 20, "constraint": "positive integer", "meaning": "Maximum retained activity entries; reducing it immediately removes oldest entries."},
+      "max-active-projects": {"default": 3, "constraint": "positive integer", "meaning": "Proposed initial concurrency default; at most one unresolved dispatched request per project."},
+      "paused": {"default": false, "constraint": "boolean", "meaning": "Persistent global dispatch pause; does not stop commands, observation, or result processing."},
+      "codex-executable": {"default": null, "constraint": "absolute executable path or null", "meaning": "Explicit override, otherwise discover a compatible desktop-bundled executable and expose the resolved path/version."},
+      "desktop-wake": {"default": "open-on-demand", "constraint": "open-on-demand or queue-only", "meaning": "Whether Sweeper may open destination deeplinks when queue delivery does not start; opening can change the visible conversation."}
+    },
+    "projects": {
+      "source": "Required record: either {kind: folder, value: absolute-folder-path} or {kind: machineroot, value: resource-name}. Resolve the latter with machineroot.get().",
+      "zookeep-id": "Read-only identity from the folder's zoo-project.json field zookeep-project-guid. Require valid metadata before activating a subscription; never synthesize or change its GUID.",
+      "name": "Read-only display name from zoo-project.json.",
+      "resolved-path": "Read-only canonical folder path. Preserve the configured source alongside it.",
+      "conversation": "Explicit thread UUID or null. Accept a codex://threads/<uuid> link at the client boundary and normalize it to the UUID.",
+      "paused": "Persistent boolean, default false."
+    },
+    "validation": [
+      "Reject unknown keys, incompatible types, nonfinite intervals, and edits to derived fields. Return actionable field-specific errors.",
+      "A set operation validates and persists the complete resulting configuration before success. A failed edit leaves the previous configuration intact.",
+      "Creating a project uses set projects.<alias> with a source record. Updating an existing project's source rechecks its GUID; a different identity requires deliberate removal and registration, not silent rebinding.",
+      "Reject duplicate subscriptions to the same canonical folder or ZooKeep GUID. Resolve named resources again on startup and before use; an identity mismatch blocks dispatch.",
+      "Changing a conversation applies only to future attempts. An already submitted attempt retains its recorded destination."
+    ]
+  },
+  "commands": {
+    "get": "Arguments: key, optional; no key returns full persistent configuration with derived subscription fields. Read-only runtime state is available through status.",
+    "set": "Arguments: key and value. Values are typed JSON on the wire; CLI syntax must document literal parsing and support an explicit JSON form for records and ambiguous strings.",
+    "delete": "Arguments: key. Deleting a setting restores its default. Deleting a conversation clears the explicit binding. Deleting projects.<alias> unsubscribes without deleting project data, chats, or dispatch history. Required project fields cannot be deleted individually.",
+    "options": "Return supported commands, writable keys, types, defaults, accepted values, and read-only fields; optionally narrow to a key.",
+    "status": "Return instance UUID, heartbeat, uptime, paused state, effective settings, last/next scan, active/queued counts, and per-project path, GUID, binding source, last scan, and blocking reason; optional project alias filter.",
+    "projects": "List subscriptions and their resolved identities, paths, selected conversations, and state.",
+    "conversations": "List discoverable conversations for one subscribed folder with title, thread UUID, and exact [SWEEPER] candidates. Discovery availability is adapter-dependent; do not claim the agent's desktop list_threads tool is callable from Python.",
+    "requests": "List requests and dispatch state, optionally filtered by project or state. Support a request-detail query including attempt evidence and results.",
+    "log": "Return retained activity entries, optionally filtered by project or severity. Filters operate on the already bounded log; they do not retrieve discarded history.",
+    "pause": "Persist paused=true globally or for the selected project. Does not interrupt already submitted Codex work.",
+    "resume": "Persist paused=false globally or for the selected project; normal eligibility checks still apply.",
+    "scan": "Schedule an immediate scan of all projects or one project. Does not bypass pauses or duplicate protection. Return scan acceptance, not a claim that all work is complete.",
+    "retry": "Create a new attempt for a selected request after checking prior delivery evidence. Refuse automatic retry of submitted or uncertain attempts; an explicit acknowledgment of duplicate risk is required for a manual override.",
+    "stop": "Acknowledge, stop admitting new dispatches, settle local state and replies, publish stopped status, and exit. Work already handed to Codex may continue; stop does not imply cancellation."
+  },
+  "binding-selection": [
+    "Prefer an explicitly saved thread UUID. Otherwise, when discovery is available, default to the single conversation titled exactly [SWEEPER] associated with the same resolved project folder on the local host.",
+    "Zero or multiple matches leave requests waiting for binding. Never choose by most-recent activity or title alone across different projects.",
+    "Persist a uniquely discovered default UUID before submission. A subsequent rename does not break that assignment; expose that it originated from default discovery. Clearing the assignment allows discovery again.",
+    "The user manually prepares the destination conversation using Context Jetpack and project-specific guidance. Sweeper does not automatically create replacement conversations."
+  ],
+  "filetalk": {
+    "envelope": "Each message is UTF-8 JSON with FileTalk Core fields channel, signal, timestamp. timestamp is a string containing decimal Unix epoch seconds, not an RFC 3339 string. channel is an opaque routing identifier; operation semantics live inside signal.",
+    "delivery": "Write each command directly to a unique .json filename in the engine INCOMING directory. No Patchboard router is required. The command's signal includes the client's absolute reply-inbox path and opaque reply channel.",
+    "transport": [
+      "Follow FileTalk File Transport v1: readers skip JSON parse failures and retry later; parseability establishes completion. Writers do not use temporary-file rename publication for these messages.",
+      "Do not assume directory enumeration order is command order. A client waits for each dependent mutation's response before sending the next one.",
+      "After a parseable message is handled, remove it from the mailbox. Archive well-formed but invalid protocol messages with diagnostics rather than repeatedly processing them.",
+      "Clients correlate replies by command_id and remove consumed replies. A mismatching reply is never treated as the awaited result."
+    ],
+    "client-lifecycle": [
+      "A CLI invocation creates its own client UUID and reply inbox before publishing its command; the GUI keeps one inbox for its lifetime.",
+      "Proposed CLI timeout is 30 seconds, configurable per invocation. Report command UUID and timeout with outcome unknown, not operation failed. Do not automatically resubmit mutations under a fresh UUID.",
+      "Keep a timed-out inbox so a late reply can arrive. Provide subsequent response inspection by command UUID. Clients may remove empty inboxes after successful consumption; abandoned inbox cleanup is explicit maintenance.",
+      "Proposed CLI exits: 0 for successful engine response, 1 for engine-reported failure, 2 for local argument errors, 3 for timeout or unknown delivery outcome."
+    ],
+    "duplicates": "Record command UUID and semantic payload before mutation. A repeat with the same semantic command returns its cached outcome to the supplied reply inbox; a different semantic payload with that UUID is rejected. Preserve receipts across restart. Interrupted actions are reconciled or reported uncertain, never blindly repeated. Receipt retention/compaction is explicit maintenance, independent of log-limit.",
+    "responses": "Send one correlated success/error response after persistence. Reply-write failure does not roll back a committed operation; retain its outcome for retrieval. Error codes include invalid-command, invalid-key, invalid-value, project-unavailable, identity-mismatch, binding-unavailable, delivery-unknown, and engine-stopping."
+  },
+  "dispatch-and-results": {
+    "eligibility": "Scan complete request JSON files; validate request format, owning project identity, directive, and prior attempts. Null request.project.zoo_id is allowed; when present it must match zoo-project.json. Preserve please-hold; investigate without implementing for please-investigate; implement for go-ahead.",
+    "scheduling": "Use a fair queue across eligible projects, with deterministic created_at then request_id ordering within a project. Enforce one unresolved submission per project and the global limit; missing bindings and project errors must not stop other projects.",
+    "states": ["waiting-for-binding", "ready", "submitting", "queued", "running", "completed", "failed", "blocked", "delivery-unknown"],
+    "state-meaning": "These are engine attempt states. Held directives and pauses are eligibility reasons, not invented capture statuses. Queue acceptance is queued, never completed. Missing completion evidence leaves work unresolved rather than successful.",
+    "recovery": "Persist attempt UUID, request UUID, project GUID, destination UUID, and intent before submission. Persist queue receipt immediately afterward. A crash or timeout spanning submission may leave delivery-unknown; do not resend automatically. Startup reconciles existing attempts before admitting work.",
+    "completion": "Specify an agent result receipt and/or a verified observation adapter during implementation, as described in 0004. Until then, conservatively retain queued state and expose manual inspection; autonomous concurrency slots cannot be released merely because the queue command exited successfully.",
+    "request-compatibility": "0002 specifies newly captured records only. Keep the initial lifecycle in engine-owned dispatch records; do not silently expand or rewrite the capture format. A future request-format lifecycle amendment can define projection back into execution."
+  },
+  "bounded-log": [
+    "Retain at most settings.log-limit activity entries, default 20; entries carry time, severity, event, readable message, and optional project/request/command IDs.",
+    "Log meaningful changes and failures. Do not log every empty scan. Coalesce identical recurring errors with occurrence count and first/last times.",
+    "The dispatch and command receipts are operational records, not an unbounded secondary activity log. Their retention must not be tied to the 20-entry display limit."
+  ],
+  "softspec": {
+    "schemas": {
+      "command-signal": {
+        "structure": {
+          "type": "object",
+          "keys": {
+            "protocol_version": {"const": 1, "required": true},
+            "kind": {"const": "command", "required": true},
+            "command_id": {"type": "string", "semantic_type": "uuid", "required": true},
+            "operation": {"type": "string", "required": true},
+            "arguments": {"type": "object", "required": true},
+            "reply_inbox": {"type": "string", "semantic_type": "absolute local directory path", "required": true},
+            "reply_channel": {"type": "string", "required": true}
+          },
+          "additional_keys": false
+        }
+      },
+      "response-signal": {
+        "structure": {
+          "type": "object",
+          "keys": {
+            "protocol_version": {"const": 1, "required": true},
+            "kind": {"const": "response", "required": true},
+            "command_id": {"type": "string", "semantic_type": "uuid", "required": true},
+            "ok": {"type": "boolean", "required": true},
+            "result": {"type": "any JSON value; null on failure", "required": true},
+            "error": {"type": "null on success; object with code, message, and optional details on failure", "required": true}
+          },
+          "additional_keys": false
+        }
+      }
+    }
+  },
+  "examples": {
+    "command": {
+      "channel": "sweeper-control",
+      "timestamp": "1792750000.25",
+      "signal": {
+        "protocol_version": 1,
+        "kind": "command",
+        "command_id": "a59b44b0-0483-4ab8-9563-e25ed1661713",
+        "operation": "set",
+        "arguments": {"key": "settings.poll-seconds", "value": 5},
+        "reply_inbox": "C:/example/sweeper-state/clients/client-uuid/INCOMING",
+        "reply_channel": "client-replies"
+      }
+    },
+    "response": {
+      "channel": "client-replies",
+      "timestamp": "1792750000.5",
+      "signal": {
+        "protocol_version": 1,
+        "kind": "response",
+        "command_id": "a59b44b0-0483-4ab8-9563-e25ed1661713",
+        "ok": true,
+        "result": {"key": "settings.poll-seconds", "value": 5},
+        "error": null
+      }
+    }
+  },
+  "acceptance": [
+    "CLI and GUI-shaped FileTalk messages use the same handlers and correlated replies; test with no GUI running.",
+    "Configuration, subscriptions, bindings, pauses, and command/dispatch receipts survive engine restart.",
+    "Every subscribed folder is scanned each interval, and one bad folder does not stop other scans.",
+    "A timed-out CLI and a duplicate command do not cause duplicate dispatch. Unknown submission outcomes remain visible.",
+    "A selected prepared desktop conversation receives a real request through the tested queue transport; unloaded-thread behavior and navigation policy are explicit.",
+    "The activity log never exceeds its configured entry count. Empty polling does not evict useful events."
+  ]
+}

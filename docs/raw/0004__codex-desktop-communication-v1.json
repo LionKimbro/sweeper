@@ -1,0 +1,133 @@
+{
+  "document": {
+    "document-id": "sweeper.codex-desktop-communication.v1",
+    "title": "Sweeper Codex Desktop Communication v1",
+    "date": "2026-10-23",
+    "status": "verified Windows experiments plus implementation requirements; not yet a reusable adapter",
+    "purpose": "Record how an external Python process submits to a prepared existing Codex desktop conversation, what was tested, and which integration details remain unresolved.",
+    "supersedes": [],
+    "superseded-by": [],
+    "related-documents": ["0003__headless-engine-and-command-protocol-v1.json"],
+    "sources": [
+      {"title": "Codex non-interactive mode", "url": "https://learn.chatgpt.com/docs/non-interactive-mode", "use": "Separate execution and resume interface; not proof of delivery into a running desktop owner."},
+      {"title": "Codex app-server", "url": "https://learn.chatgpt.com/docs/app-server", "use": "Thread discovery, resume, and turn protocol; a newly launched server is not automatically the desktop app's server."},
+      {"title": "Dibs wake mechanisms", "url": "https://github.com/agenxy/dibs/blob/main/WAKE-MECHANISMS.md", "use": "Primary project report that identified codex queue and loaded-thread limitations; local Windows tests below provide installation-specific evidence."},
+      {"title": "Dibs native app delivery", "url": "https://github.com/agenxy/dibs/blob/main/docs/NATIVE-APP-DELIVERY.md", "use": "Version-specific macOS IPC investigation; not an implemented or Windows-verified Sweeper interface."}
+    ]
+  },
+  "destination-model": [
+    "The user manually creates a conversation in the correct Codex project and prepares it with Context Jetpack, coding policy, history, and project-specific instructions.",
+    "Sweeper stores the ZooKeep project GUID to Codex thread UUID association. Titles are display/discovery aids; exact [SWEEPER] is the default only when unique within the owning project folder.",
+    "The UUID in codex://threads/<uuid> is the conversation's thread ID. Use that thread ID for queue targeting; do not derive a target from the active GUI view.",
+    "Codex project IDs, ZooKeep GUIDs, and conversation thread IDs are distinct identifiers. The app-server protocol can additionally distinguish thread.id from thread.sessionId; use thread.id to address the chosen conversation.",
+    "Continuing a prepared conversation preserves access to its persisted conversation context, subject to Codex's own history/compaction behavior. It is not a promise of unlimited exact recall."
+  ],
+  "verified-environment": {
+    "os": "Windows; Python launched the executable through subprocess.run().",
+    "standalone-cli": {"version": "0.105.0", "path": "C:/Users/Lion/AppData/Roaming/npm/codex.cmd"},
+    "desktop-cli": {"version": "0.162.0-alpha.17.2", "path": "C:/Users/Lion/AppData/Local/OpenAI/Codex/bin/2e5e00daee91c61d/codex.exe"},
+    "desktop-package": "OpenAI.Codex_26.1007.2314.0_x64__2p2nqsd0c76g0; executable ChatGPT.exe",
+    "project-root": "F:/repo/sweeper",
+    "zookeep-project-guid": "f411176e-0ecc-43d7-a36a-0c97cae1444e",
+    "destination-title": "[SWEEPER]",
+    "destination-thread-id": "01a16837-6e0b-7f11-8768-ee1ef2c9105a",
+    "portability": "These are experiment coordinates, not application defaults. Discover/configure the executable and destinations; the hash-named desktop binary directory can change after an update."
+  },
+  "experiments": [
+    {
+      "name": "Old standalone CLI resume",
+      "method": "Python launched codex exec --cd <project> resume --json <thread-id> - and supplied prompt text through stdin.",
+      "observed": "The CLI resolved the thread ID but failed before model execution: model metadata parsing errors, state-database migration incompatibility, and rejection of the configured gpt-6.1-sol model.",
+      "conclusion": "Do not assume a globally installed CLI is compatible with current desktop session data. This is not proof of an account-wide model restriction."
+    },
+    {
+      "name": "Desktop-bundled CLI resume",
+      "method": "Python launched the newer desktop executable with exec resume for the same thread.",
+      "observed": "Failed with thread-store conflict: thread already has an active writer. The desktop app owned the conversation even though its last turn had completed.",
+      "conclusion": "exec resume attempts to run the conversation in another process; it does not mean send input to the existing desktop owner. Do not delete locks or kill the owner as a dispatch strategy."
+    },
+    {
+      "name": "Agent-provided desktop messaging tool",
+      "method": "The coordinating agent called mcp__codex_app__send_message_to_thread with threadId and prompt.",
+      "observed": "[SWEEPER] created test.json and recalled the earlier guideline about mutating global containers in place. The user saw the work in the destination chat.",
+      "conclusion": "Verified the prepared destination and context. This tool is supplied to the agent by the app; the test did not establish that external Python can invoke it."
+    },
+    {
+      "name": "Python queue into loaded desktop conversation",
+      "method": "Python launched desktop-bundled codex queue --thread <thread-id> --message <prompt>.",
+      "observed": "Exit 0 with queue-item UUID 01a16869-55b9-78f3-abb1-e43d55b2a6e1. Without navigating to or messaging the destination through agent desktop tools, a new turn ran and created test-queue.json in about ten seconds. Completion was subsequently observed read-only.",
+      "conclusion": "External Python-to-CLI-to-existing-desktop-conversation execution is demonstrated on this Windows installation."
+    },
+    {
+      "name": "Python queue after complete desktop restart",
+      "method": "The user completely exited and restarted the app. Python submitted one message to the same thread without first opening it.",
+      "observed": "Exit 0 with queue-item UUID 01a16887-f203-79c0-9122-909634225ce5. No output file appeared within 45 seconds. Python then called os.startfile('codex://threads/01a16837-6e0b-7f11-8768-ee1ef2c9105a'). The same queued request created test-queue-after-restart.json about 14 seconds later. No second message was submitted. The user observed the GUI switch to that conversation.",
+      "conclusion": "Queue acceptance alone did not promptly start this unloaded conversation. Opening its deeplink loaded it and enabled the retained request to run. This is one measured restart case, not a guarantee about all lifecycle states."
+    }
+  ],
+  "submission-method": {
+    "command-arguments": ["<compatible-codex-executable>", "queue", "--thread", "<destination-thread-uuid>", "--message", "<task-brief>"],
+    "python": "Use subprocess with a list of arguments, shell=False, explicit project cwd, bounded timeout, and captured stdout/stderr. On Windows prefer the actual .exe over an npm shell shim. Do not interpolate request text into PowerShell or cmd command strings.",
+    "prompt": "--message accepts text. Include a readable instruction plus the serialized request JSON. The queue CLI is not a JSON-RPC endpoint and the tested queue command does not consume prompt stdin.",
+    "task-brief": [
+      "Include request UUID, attempt UUID, owning project GUID and root, directive, title, description, and useful context.",
+      "Ask the prepared conversation to follow its existing project instructions. For please-investigate explicitly prohibit implementation; do not submit please-hold.",
+      "Specify result reporting separately from ordinary conversation output. A queue acknowledgment alone never means the requested work succeeded."
+    ],
+    "receipt": "Persist exit status, submission time, destination UUID, queue-item UUID when available, and concise diagnostics. Capture the command's observed output but do not depend solely on unversioned English success text; verify behavior against the selected binary.",
+    "unknown-outcomes": "A timeout, crash, or missing response can occur after enqueue. Mark delivery-unknown and reconcile; do not resubmit automatically. Opening a deeplink for an already accepted item is not a second submission.",
+    "payload-limit": "Windows command-line length bounds --message. Detect oversized argument vectors before launch. Proposed large-request mode passes a short brief referencing the durable local request file and attempt ID; verify agent readability and length handling before enabling it."
+  },
+  "loading-policy": {
+    "queue-only": "Enqueue and report waiting/queued when no start evidence appears. Do not navigate the user's desktop.",
+    "open-on-demand": "After acceptance, use verified ownership/start evidence where available. If no such observer exists, a proposed initial 45-second grace period may trigger one recorded deeplink-open attempt. Lack of a receipt is not proof that the thread is unloaded; expose the possible unnecessary navigation.",
+    "windows-action": "Python os.startfile('codex://threads/<validated-thread-uuid>') asks Windows to open the registered desktop app route. The calling process receives no execution-completion receipt from os.startfile.",
+    "side-effect": "The deeplink may reveal/activate the local app and change the displayed conversation. Do not open it every scan. Limit to one wake attempt per submitted attempt per observed app incarnation; further unsuccessful wakes require explicit attention.",
+    "deferred": "Reliable app-incarnation detection, nonintrusive loaded-thread discovery, and headless loading without GUI navigation require implementation investigation. Do not claim the macOS IPC report supplies a stable Windows API."
+  },
+  "discovery-and-executable": [
+    "Manual deeplink/UUID assignment is sufficient for the first engine adapter. Full UI conversation discovery is a separate capability to implement and verify.",
+    "App-server thread/list documents filtering by cwd and title search. A Python discovery adapter must prove that it sees desktop conversations with the selected executable and state location. A CLI/server's title search is not the application's ZooKeep identity registry.",
+    "Resolve the desktop-compatible executable through configuration or a tested discovery mechanism; report its path/version in status. PATH alone selected an incompatible CLI in the experiment.",
+    "Do not alter CODEX_HOME or authentication files to evade writer ownership. Custom state locations may hide the very conversation being targeted.",
+    "Launching codex app-server creates another server. Its documented thread/resume and turn/start operations do not automatically connect to the desktop app's live owner.",
+    "A future direct local IPC adapter may improve loading and result observation, but must separately verify platform, version, supported operations, acceptance receipts, and lifecycle behavior."
+  ],
+  "result-protocol-proposal": {
+    "status": "Proposed extension; not demonstrated by the queue experiments and not a promise that plain Codex CLI output contains execution results.",
+    "method": "Include the engine's absolute INCOMING directory and the expected result-signal contract in the task brief. Ask the agent to emit started and final FileTalk messages using a small documented helper when available. The engine remains the sole writer of its dispatch ledger.",
+    "correlation": "Each result carries request UUID, attempt UUID, and destination thread UUID. Reject mismatched or unknown attempts; identical repeated receipts are idempotent.",
+    "outcomes": "started, completed, failed, or blocked; final receipts include summary, changed files, verification performed, and any attention needed. For investigation, completed means investigation complete, not implementation performed.",
+    "limits": "An agent can stop before writing a receipt. A receipt is agent-reported evidence, not independent proof of correctness. Missing evidence remains unresolved and queryable; never infer success from elapsed time, an empty queue, or CLI exit 0."
+  },
+  "softspec": {
+    "schemas": {
+      "agent-result-signal": {
+        "description": "Proposed payload inside a FileTalk Core message sent to the engine; timestamp remains in the Core envelope.",
+        "structure": {
+          "type": "object",
+          "keys": {
+            "protocol_version": {"const": 1, "required": true},
+            "kind": {"const": "agent-result", "required": true},
+            "request_id": {"type": "string", "semantic_type": "uuid", "required": true},
+            "attempt_id": {"type": "string", "semantic_type": "uuid", "required": true},
+            "thread_id": {"type": "string", "semantic_type": "uuid", "required": true},
+            "outcome": {"type": "string", "vocabulary": {"started": "Work began", "completed": "Requested directive fulfilled", "failed": "Execution failed", "blocked": "Attention required"}, "vocabulary_mode": "closed", "required": true},
+            "summary": {"type": "string", "required": true},
+            "changed_files": {"type": "array", "items": "string", "required": true},
+            "verification": {"type": "array", "items": "string", "required": true}
+          },
+          "additional_keys": true
+        }
+      }
+    }
+  },
+  "next-verification": [
+    "Implement and test repeatable executable and conversation discovery without assuming agent-only tools are external APIs.",
+    "Repeat queue delivery when the destination is busy and verify it does not produce overlapping project edits.",
+    "Test multiple prepared projects, missing/renamed/archived destinations, and the app not running.",
+    "Test a started/final result receipt end to end, including engine restart between enqueue and completion.",
+    "Test uncertain queue outcomes and ensure recovery never silently duplicates a request.",
+    "Test large task briefs and confirm chosen file-reference fallback behavior."
+  ]
+}
