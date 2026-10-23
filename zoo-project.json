@@ -1,0 +1,21 @@
+{
+  "zookeep-project-guid": "f411176e-0ecc-43d7-a36a-0c97cae1444e",
+  "name": "sweeper",
+  "repo-type": "python-2026-03",
+  "license": "CC0-1.0",
+  "repository": {
+    "name": "sweeper",
+    "visibility": "public"
+  },
+  "python": {
+    "distribution": {
+      "name": "lions-sweeper-agent"
+    },
+    "import-packages": [
+      {
+        "name": "sweeperagent",
+        "path": "src/sweeperagent"
+      }
+    ]
+  }
+}

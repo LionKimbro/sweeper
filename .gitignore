@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+venv/
+.venv/
+.local/
+.claude/
+.focus-explorer/
+.pycard/
+.zookeep/
+.pydeck26/
+zookeeper-report.json
