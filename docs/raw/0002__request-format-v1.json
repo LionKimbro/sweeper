@@ -1,0 +1,80 @@
+{
+  "document": {
+    "document-id": "sweeper.request-format.v1",
+    "title": "Sweeper Request Format v1",
+    "tags": ["sweeper", "request-format", "capture", "softspec"],
+    "purpose": "Describe the version 1 JSON format written by the Sweeper capture library.",
+    "type": {
+      "logical": {"base": "file", "format": "json", "encoding": "utf-8"},
+      "semantic": {"base": "spec"}
+    }
+  },
+  "softspec": {
+    "schemas": {
+      "sweeper-request-v1": {
+        "title": "Sweeper Request v1",
+        "description": "One captured software improvement request and its execution state.",
+        "notes": [
+          "This schema describes newly captured requests. The capture library initializes execution.status to pending and the other execution fields to null; later execution lifecycle states are not specified here.",
+          "Required keys describe the stored record, not caller input. The capture library generates identifiers and timestamps and supplies omitted metadata defaults.",
+          "Request field names retain their underscores to match the stored JSON format."
+        ],
+        "structure": {
+          "type": "object",
+          "keys": {
+            "schema_version": {"type": "integer", "const": 1, "required": true},
+            "request_id": {"type": "string", "semantic_type": "uuid", "required": true},
+            "created_at": {"type": "string", "semantic_type": "RFC 3339 date-time with UTC offset", "required": true},
+            "project": {
+              "type": "object", "required": true,
+              "keys": {
+                "name": {"type": ["string", "null"], "required": true},
+                "zoo_id": {"type": ["string", "null"], "required": true}
+              },
+              "additional_keys": true
+            },
+            "request": {
+              "type": "object", "required": true,
+              "keys": {
+                "title": {"type": "string", "required": true},
+                "description": {"type": "string", "required": true},
+                "directive": {
+                  "type": "string",
+                  "vocabulary": {
+                    "go-ahead": "Implement the requested project-scoped change.",
+                    "please-investigate": "Investigate and provide analysis or recommendations without implementing the change.",
+                    "please-hold": "Record the request for later consideration without automatically dispatching it."
+                  },
+                  "vocabulary_mode": "closed",
+                  "required": true
+                }
+              },
+              "additional_keys": true
+            },
+            "context": {
+              "type": "object", "required": false,
+              "keys": {
+                "interface": {"type": ["string", "null"], "required": true},
+                "component": {"type": ["string", "null"], "required": true},
+                "active_item_id": {"type": ["string", "null"], "required": true},
+                "notes": {"type": "string", "required": true}
+              },
+              "additional_keys": true
+            },
+            "execution": {
+              "type": "object", "required": true,
+              "keys": {
+                "status": {"type": "string", "const": "pending", "required": true},
+                "agent": {"type": ["string", "null"], "required": true},
+                "started_at": {"type": ["string", "null"], "required": true},
+                "completed_at": {"type": ["string", "null"], "required": true}
+              },
+              "additional_keys": true
+            }
+          },
+          "additional_keys": true
+        }
+      }
+    }
+  }
+}
