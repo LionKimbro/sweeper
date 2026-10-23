@@ -1,1 +1,10 @@
-{"items": []}
+{
+  "items": [
+    {
+      "path": "docs/raw/",
+      "filename": "0001__initial-spec-per-wing-cat.md",
+      "hook": "1st spec",
+      "kind": "file"
+    }
+  ]
+}
